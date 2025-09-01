@@ -33,6 +33,7 @@ langchain-cohere
 # LLM providers
 openai
 anthropic
+dashscope
 
 # Embeddings
 cohere

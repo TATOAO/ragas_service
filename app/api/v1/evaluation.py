@@ -42,8 +42,8 @@ async def evaluate_dataset(
     evaluation = Evaluation(
         dataset_id=evaluation_data.dataset_id,
         experiment_name=evaluation_data.experiment_name,
-        metrics=evaluation_data.metrics,
-        llm_config=evaluation_data.llm_config.dict() if evaluation_data.llm_config else None,
+        metrics=[m.model_dump() for m in evaluation_data.metrics],
+        llm_config=evaluation_data.llm_config.model_dump() if evaluation_data.llm_config else None,
         embeddings_config=evaluation_data.embeddings_config.dict() if evaluation_data.embeddings_config else None,
         status="pending"
     )
@@ -51,6 +51,8 @@ async def evaluate_dataset(
     db.add(evaluation)
     db.commit()
     db.refresh(evaluation)
+
+    start_time = datetime.utcnow()
     
     # Start background evaluation
     background_tasks.add_task(
@@ -60,8 +62,7 @@ async def evaluate_dataset(
         evaluation_data.metrics,
         evaluation_data.llm_config,
         evaluation_data.embeddings_config,
-        evaluation_data.batch_size,
-        evaluation_data.raise_exceptions
+        evaluation_data.batch_size
     )
     
     logger.info(f"Started evaluation: {evaluation.evaluation_id}")
@@ -70,13 +71,48 @@ async def evaluate_dataset(
     samples_count = db.query(Sample).filter(Sample.dataset_id == evaluation_data.dataset_id).count()
     estimated_time = datetime.utcnow() + timedelta(minutes=samples_count * 2)  # Rough estimate
     
+    """
+    class EvaluationResponse(EvaluationBase):
+        evaluation_id: str
+        dataset_id: str
+        status: str
+        progress: float
+        error_message: Optional[str]
+        overall_scores: Optional[Dict[str, Any]]
+        cost_analysis: Optional[Dict[str, Any]]
+        traces: Optional[Dict[str, Any]]
+        started_at: Optional[datetime]
+        completed_at: Optional[datetime]
+        created_at: datetime
+        updated_at: datetime
+        
+        class Config:
+            from_attributes = True
+
+    """
+
     return {
+        "experiment_name": evaluation.experiment_name,
+        "metrics": evaluation.metrics,
+        "llm_config": evaluation.llm_config,
+        "embeddings_config": evaluation.embeddings_config,
+        "batch_size": evaluation.batch_size,
         "evaluation_id": evaluation.evaluation_id,
+        "dataset_id": evaluation.dataset_id,
         "status": "running",
         "progress": 0.0,
         "estimated_completion": estimated_time.isoformat(),
-        "results_url": f"/api/v1/evaluations/{evaluation.evaluation_id}/results"
+        "started_at": start_time.isoformat(),
+        "completed_at": None,
+        "created_at": start_time.isoformat(),
+        "updated_at": start_time.isoformat(),
+        "results_url": f"/api/v1/evaluations/{evaluation.evaluation_id}/results",
+        "overall_scores": None,
+        "cost_analysis": None,
+        "traces": None,
+        "error_message": None
     }
+
 
 
 @router.get("/evaluations/{evaluation_id}", response_model=EvaluationStatusResponse)
@@ -267,7 +303,6 @@ async def run_evaluation(
     llm_config: Optional[dict],
     embeddings_config: Optional[dict],
     batch_size: int,
-    raise_exceptions: bool
 ):
     """Background task to run evaluation"""
     from app.core.database import SessionLocal
@@ -342,12 +377,6 @@ async def run_evaluation(
                 
             except Exception as e:
                 logger.error(f"Error processing batch in evaluation {evaluation_id}: {e}")
-                if raise_exceptions:
-                    evaluation.status = "failed"
-                    evaluation.error_message = str(e)
-                    evaluation.completed_at = datetime.utcnow()
-                    db.commit()
-                    return
                 continue
         
         # Calculate overall scores
@@ -378,29 +407,17 @@ async def run_evaluation(
         db.close()
 
 
+# python -m app.api.v1.evaluation
 def main():
     """Unit test function for evaluation routes"""
-    import asyncio
     from fastapi.testclient import TestClient
     from main import app
+    from app.core.config import settings
     
     client = TestClient(app)
     
-    # Test data
-    test_evaluation = {
-        "dataset_id": "test-dataset-id",
-        "metrics": [
-            {"name": "answer_relevancy", "parameters": {}}
-        ],
-        "llm_config": {
-            "provider": "openai",
-            "model": "gpt-4o",
-            "api_key": "test-key"
-        },
-        "experiment_name": "Test Evaluation"
-    }
-    
     # Test single sample evaluation
+    """
     test_single_eval = {
         "sample": {
             "user_input": "What is the capital of France?",
@@ -409,7 +426,13 @@ def main():
         },
         "metrics": [
             {"name": "answer_relevancy", "parameters": {}}
-        ]
+        ],
+        "llm_config": {
+            "provider": "openai",
+            "model": "qwen-plus",
+            "api_key": settings.OPENAI_API_KEY,
+            "base_url": settings.OPENAI_BASE_URL
+        },
     }
     
     # Test single evaluation
@@ -417,6 +440,36 @@ def main():
     assert response.status_code == 200
     
     print("Evaluation routes test passed!")
+    """
+
+
+    # Test evaluation on dataset
+    test_evaluation = {
+        "dataset_id": "8bdfdfe6-22d6-462d-a569-48157b33c697",
+        "metrics": [
+            {"name": "answer_relevancy", "parameters": {}}
+        ],
+        "llm_config": {
+            "provider": "openai",
+            "model": "qwen-plus",
+            "api_key": settings.OPENAI_API_KEY,
+            "base_url": settings.OPENAI_BASE_URL
+        },
+        "experiment_name": "Test Evaluation"
+    }
+    
+    response = client.post("/api/v1/evaluate/dataset", json=test_evaluation, headers={"Authorization": "Bearer test-api-key"})
+    print(response.json())
+    assert response.status_code == 200
+    
+    print("Evaluation routes test passed!")
+
+
+
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -9,21 +9,36 @@ if TYPE_CHECKING:
     from .sample import Sample
 
 
+# Additional evaluation schemas
+class MetricConfig(SQLModel):
+    name: str = Field(..., description="Metric name")
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Metric parameters")
+
+    def get(self, key: str, default: Optional[Any] = None) -> Any:
+        return getattr(self, key, default)
+
+class LLMConfig(SQLModel):
+    provider: str = Field(..., description="LLM provider")
+    model: str = Field(..., description="Model name")
+    api_key: str = Field(..., description="API key")
+
+    def get(self, key: str, default: Optional[Any] = None) -> Any:
+        return getattr(self, key, default)
 class EvaluationBase(SQLModel):
     experiment_name: Optional[str] = Field(None, description="Experiment name")
-    metrics: str = Field(..., description="List of metric configurations")
-    llm_config: Optional[str] = Field(None, description="LLM configuration")
+    metrics: List[MetricConfig] = Field(..., description="Metrics to evaluate", sa_type=JSON)
+    llm_config: Optional[LLMConfig] = Field(None, description="LLM configuration", sa_type=JSON)
     embeddings_config: Optional[str] = Field(None, description="Embeddings configuration")
+    batch_size: int = Field(default=10, description="Batch size")
 
 
 class EvaluationCreate(EvaluationBase):
     dataset_id: str = Field(..., description="Dataset ID")
 
-
 class EvaluationUpdate(SQLModel):
     experiment_name: Optional[str] = Field(None, description="Experiment name")
-    metrics: Optional[List[Dict[str, Any]]] = Field(None, description="List of metric configurations")
-    llm_config: Optional[Dict[str, Any]] = Field(None, description="LLM configuration")
+    metrics: Optional[Any] = Field(None, description="List of metric configurations")
+    llm_config: Optional[Any] = Field(None, description="LLM configuration")
     embeddings_config: Optional[Dict[str, Any]] = Field(None, description="Embeddings configuration")
 
 
@@ -37,6 +52,7 @@ class Evaluation(EvaluationBase, table=True):
     status: str = Field(default="pending", description="Evaluation status: pending, running, completed, failed")
     progress: float = Field(default=0.0, description="Evaluation progress (0.0 to 1.0)")
     error_message: Optional[str] = Field(None, description="Error message if failed")
+
     
     # Results
     overall_scores: Optional[str] = Field(None, description="Overall metric scores")
@@ -119,17 +135,6 @@ class EvaluationResultResponse(EvaluationResultBase):
         from_attributes = True
 
 
-# Additional evaluation schemas
-class MetricConfig(SQLModel):
-    name: str = Field(..., description="Metric name")
-    parameters: Optional[Dict[str, Any]] = Field(None, description="Metric parameters")
-
-
-class LLMConfig(SQLModel):
-    provider: str = Field(..., description="LLM provider")
-    model: str = Field(..., description="Model name")
-    api_key: str = Field(..., description="API key")
-
 
 class EmbeddingsConfig(SQLModel):
     provider: str = Field(..., description="Embeddings provider")
@@ -155,7 +160,7 @@ class EvaluationResultsResponse(SQLModel):
     evaluation_id: str
     dataset_id: str
     experiment_name: Optional[str]
-    metrics: Dict[str, float]
+    metrics: Any
     sample_scores: List[SampleScore]
     cost_analysis: Optional[Dict[str, Any]]
     traces: List[Dict[str, str]]
@@ -164,8 +169,8 @@ class EvaluationResultsResponse(SQLModel):
 
 class SingleEvaluationRequest(SQLModel):
     sample: Dict[str, Any] = Field(..., description="Sample to evaluate")
-    metrics: List[MetricConfig] = Field(..., description="Metrics to evaluate")
-    llm_config: Optional[LLMConfig] = Field(None, description="LLM configuration")
+    metrics: Any = Field(..., description="Metrics to evaluate")
+    llm_config: Optional[Any] = Field(None, description="LLM configuration")
 
 
 class SingleEvaluationResponse(SQLModel):
@@ -177,7 +182,7 @@ class SingleEvaluationResponse(SQLModel):
 
 class EvaluationComparisonRequest(SQLModel):
     evaluation_ids: List[str] = Field(..., min_items=2, description="Evaluation IDs to compare")
-    metrics: List[str] = Field(..., description="Metrics to compare")
+    metrics: Any = Field(..., description="Metrics to compare")
 
 
 class EvaluationComparisonResponse(SQLModel):

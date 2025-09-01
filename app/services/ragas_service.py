@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+import traceback
 import cohere
 import pandas as pd
 from loguru import logger
@@ -125,6 +126,7 @@ class RAGASService:
             
             # Select metrics
             selected_metrics = []
+            import ipdb; ipdb.set_trace()
             for metric_config in metrics:
                 metric_name = metric_config.get("name")
                 if metric_name in self.metrics_map:
@@ -168,6 +170,7 @@ class RAGASService:
             }
             
         except Exception as e:
+            logger.error(f"Error evaluating single sample: {traceback.format_exc()}")
             logger.error(f"Error evaluating single sample: {e}")
             raise
     
