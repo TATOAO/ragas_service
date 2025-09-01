@@ -1,0 +1,62 @@
+# FastAPI and web framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Database
+sqlalchemy
+sqlmodel
+psycopg2-binary
+alembic
+
+# Authentication and security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# HTTP client
+httpx
+requests
+
+# Data processing
+pandas
+numpy
+
+# RAGAS and evaluation
+ragas
+langchain
+langchain-openai
+langchain-anthropic
+langchain-cohere
+
+# LLM providers
+openai
+anthropic
+
+# Embeddings
+cohere
+
+# Redis for caching and queues
+redis
+celery
+
+# Monitoring and logging
+structlog
+prometheus-client
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+
+# Development tools
+black
+isort
+flake8
+mypy
+
+# Environment and configuration
+python-dotenv
+
+loguru

@@ -1,0 +1,159 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    # image: postgres:15-alpine
+    # image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/immich-app/postgres:15-vectorchord0.4.2-pgvectors0.3.0
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/ghcr.io/immich-app/postgres:15-vectorchord0.4.2-pgvectors0.3.0-linuxarm64
+    container_name: ragas-postgres
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-ragas}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ragas_user} -d ${POSTGRES_DATABASE:-ragas}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+  # Redis for caching and queues
+  redis:
+    image: redis:7-alpine
+    container_name: ragas-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ragas-network
+
+  # RAGAS FastAPI Service
+  ragas-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ragas-service
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ragas_user}:${POSTGRES_PASSWORD:-ragas_password}@postgres:5432/${POSTGRES_DATABASE:-ragas}
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=${DEBUG:-false}
+      - HOST=0.0.0.0
+      - PORT=8000
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-here-change-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: ragas-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - ragas-service
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+  # Celery worker for background tasks (optional)
+  celery-worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ragas-celery-worker
+    command: celery -A app.celery worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ragas_user}:${POSTGRES_USER:-ragas_password}@postgres:5432/${POSTGRES_DATABASE:-ragas}
+      - REDIS_URL=redis://redis:6379
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      - ../uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+  # Celery beat for scheduled tasks (optional)
+  celery-beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ragas-celery-beat
+    command: celery -A app.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-ragas_user}:${POSTGRES_PASSWORD:-ragas_password}@postgres:5432/${POSTGRES_DATABASE:-ragas}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+  # Flower for monitoring Celery (optional)
+  flower:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: ragas-flower
+    command: celery -A app.celery flower --port=5555
+    environment:
+      - REDIS_URL=redis://redis:6379
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks:
+      - ragas-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  ragas-network:
+    driver: bridge

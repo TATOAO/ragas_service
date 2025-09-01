@@ -1,0 +1,423 @@
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+import logging
+import asyncio
+from datetime import datetime, timedelta
+import uuid
+
+from app.core.database import get_db
+from app.core.auth import get_current_user_api_key
+from app.core.exceptions import DatasetNotFoundError, EvaluationNotFoundError, MetricNotSupportedError
+from app.models.dataset import Dataset
+from app.models.evaluation import Evaluation, EvaluationResult
+from app.models.sample import Sample
+from app.models import (
+    EvaluationCreate, EvaluationResponse, EvaluationListResponse,
+    EvaluationStatusResponse, EvaluationResultsResponse, SingleEvaluationRequest,
+    SingleEvaluationResponse, EvaluationComparisonRequest, EvaluationComparisonResponse,
+    MetricConfig, LLMConfig, EmbeddingsConfig, PaginationParams
+)
+from app.services.ragas_service import RAGASService
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@router.post("/dataset", response_model=EvaluationResponse)
+async def evaluate_dataset(
+    evaluation_data: EvaluationCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Start a dataset evaluation"""
+    # Verify dataset exists
+    dataset = db.query(Dataset).filter(Dataset.dataset_id == evaluation_data.dataset_id).first()
+    if not dataset:
+        raise DatasetNotFoundError(evaluation_data.dataset_id)
+    
+    # Create evaluation record
+    evaluation = Evaluation(
+        dataset_id=evaluation_data.dataset_id,
+        experiment_name=evaluation_data.experiment_name,
+        metrics=evaluation_data.metrics,
+        llm_config=evaluation_data.llm_config.dict() if evaluation_data.llm_config else None,
+        embeddings_config=evaluation_data.embeddings_config.dict() if evaluation_data.embeddings_config else None,
+        status="pending"
+    )
+    
+    db.add(evaluation)
+    db.commit()
+    db.refresh(evaluation)
+    
+    # Start background evaluation
+    background_tasks.add_task(
+        run_evaluation,
+        evaluation.evaluation_id,
+        evaluation_data.dataset_id,
+        evaluation_data.metrics,
+        evaluation_data.llm_config,
+        evaluation_data.embeddings_config,
+        evaluation_data.batch_size,
+        evaluation_data.raise_exceptions
+    )
+    
+    logger.info(f"Started evaluation: {evaluation.evaluation_id}")
+    
+    # Calculate estimated completion time
+    samples_count = db.query(Sample).filter(Sample.dataset_id == evaluation_data.dataset_id).count()
+    estimated_time = datetime.utcnow() + timedelta(minutes=samples_count * 2)  # Rough estimate
+    
+    return {
+        "evaluation_id": evaluation.evaluation_id,
+        "status": "running",
+        "progress": 0.0,
+        "estimated_completion": estimated_time.isoformat(),
+        "results_url": f"/api/v1/evaluations/{evaluation.evaluation_id}/results"
+    }
+
+
+@router.get("/evaluations/{evaluation_id}", response_model=EvaluationStatusResponse)
+async def get_evaluation_status(
+    evaluation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Get evaluation status"""
+    evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+    if not evaluation:
+        raise EvaluationNotFoundError(evaluation_id)
+    
+    return {
+        "evaluation_id": evaluation.evaluation_id,
+        "status": evaluation.status,
+        "progress": evaluation.progress,
+        "started_at": evaluation.started_at.isoformat() if evaluation.started_at else None,
+        "completed_at": evaluation.completed_at.isoformat() if evaluation.completed_at else None,
+        "error_message": evaluation.error_message
+    }
+
+
+@router.get("/evaluations/{evaluation_id}/results", response_model=EvaluationResultsResponse)
+async def get_evaluation_results(
+    evaluation_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Get evaluation results"""
+    evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+    if not evaluation:
+        raise EvaluationNotFoundError(evaluation_id)
+    
+    if evaluation.status != "completed":
+        raise HTTPException(status_code=400, detail="Evaluation not completed yet")
+    
+    # Get sample scores
+    results = db.query(EvaluationResult).filter(EvaluationResult.evaluation_id == evaluation_id).all()
+    sample_scores = [
+        {
+            "sample_id": result.sample_id,
+            "scores": result.scores
+        }
+        for result in results
+    ]
+    
+    return {
+        "evaluation_id": evaluation.evaluation_id,
+        "dataset_id": evaluation.dataset_id,
+        "experiment_name": evaluation.experiment_name,
+        "metrics": evaluation.overall_scores or {},
+        "sample_scores": sample_scores,
+        "cost_analysis": evaluation.cost_analysis,
+        "traces": evaluation.traces or [],
+        "created_at": evaluation.created_at.isoformat() if evaluation.created_at else None
+    }
+
+
+@router.post("/single", response_model=SingleEvaluationResponse)
+async def evaluate_single_sample(
+    request: SingleEvaluationRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Evaluate a single sample"""
+    try:
+        # Initialize RAGAS service
+        ragas_service = RAGASService()
+        
+        # Run evaluation
+        result = await ragas_service.evaluate_single_sample(
+            sample=request.sample,
+            metrics=request.metrics,
+            llm_config=request.llm_config
+        )
+        
+        return {
+            "sample_id": str(uuid.uuid4()),
+            "scores": result["scores"],
+            "reasoning": result.get("reasoning"),
+            "cost": result.get("cost")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error evaluating single sample: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/evaluations", response_model=EvaluationListResponse)
+async def list_evaluations(
+    pagination: PaginationParams = Depends(),
+    dataset_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """List evaluations with pagination and filtering"""
+    query = db.query(Evaluation)
+    
+    # Apply filters
+    if dataset_id:
+        query = query.filter(Evaluation.dataset_id == dataset_id)
+    if status:
+        query = query.filter(Evaluation.status == status)
+    
+    # Get total count
+    total = query.count()
+    
+    # Apply pagination
+    evaluations = query.offset((pagination.page - 1) * pagination.size).limit(pagination.size).all()
+    
+    evaluation_list = []
+    for eval in evaluations:
+        # Get dataset name
+        dataset = db.query(Dataset).filter(Dataset.dataset_id == eval.dataset_id).first()
+        dataset_name = dataset.name if dataset else "Unknown"
+        
+        evaluation_list.append({
+            "evaluation_id": eval.evaluation_id,
+            "dataset_id": eval.dataset_id,
+            "dataset_name": dataset_name,
+            "experiment_name": eval.experiment_name,
+            "status": eval.status,
+            "metrics_count": len(eval.metrics) if eval.metrics else 0,
+            "created_at": eval.created_at.isoformat() if eval.created_at else None,
+            "completed_at": eval.completed_at.isoformat() if eval.completed_at else None
+        })
+    
+    return {
+        "evaluations": evaluation_list,
+        "total": total,
+        "page": pagination.page,
+        "size": pagination.size
+    }
+
+
+@router.post("/evaluations/compare", response_model=dict)
+async def compare_evaluations(
+    request: EvaluationComparisonRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Compare multiple evaluations"""
+    evaluations = []
+    
+    for eval_id in request.evaluation_ids:
+        evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == eval_id).first()
+        if not evaluation:
+            raise EvaluationNotFoundError(eval_id)
+        evaluations.append(evaluation)
+    
+    # Build comparison data
+    comparison = {
+        "evaluation_ids": request.evaluation_ids,
+        "metrics": {},
+        "improvements": {}
+    }
+    
+    # Extract metric scores
+    for metric in request.metrics:
+        comparison["metrics"][metric] = {}
+        for eval in evaluations:
+            if eval.overall_scores and metric in eval.overall_scores:
+                comparison["metrics"][metric][eval.evaluation_id] = eval.overall_scores[metric]
+    
+    # Calculate improvements
+    if len(evaluations) >= 2:
+        for i in range(len(evaluations) - 1):
+            current_eval = evaluations[i]
+            next_eval = evaluations[i + 1]
+            improvement_key = f"{current_eval.evaluation_id}_to_{next_eval.evaluation_id}"
+            comparison["improvements"][improvement_key] = {}
+            
+            for metric in request.metrics:
+                if (current_eval.overall_scores and next_eval.overall_scores and 
+                    metric in current_eval.overall_scores and metric in next_eval.overall_scores):
+                    improvement = next_eval.overall_scores[metric] - current_eval.overall_scores[metric]
+                    comparison["improvements"][improvement_key][metric] = f"{improvement:+.3f}"
+    
+    return {"comparison": comparison}
+
+
+async def run_evaluation(
+    evaluation_id: str,
+    dataset_id: str,
+    metrics: List[dict],
+    llm_config: Optional[dict],
+    embeddings_config: Optional[dict],
+    batch_size: int,
+    raise_exceptions: bool
+):
+    """Background task to run evaluation"""
+    from app.core.database import SessionLocal
+    
+    db = SessionLocal()
+    try:
+        # Update status to running
+        evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+        if not evaluation:
+            logger.error(f"Evaluation {evaluation_id} not found")
+            return
+        
+        evaluation.status = "running"
+        evaluation.started_at = datetime.utcnow()
+        db.commit()
+        
+        # Get samples
+        samples = db.query(Sample).filter(Sample.dataset_id == dataset_id).all()
+        total_samples = len(samples)
+        
+        if total_samples == 0:
+            evaluation.status = "completed"
+            evaluation.completed_at = datetime.utcnow()
+            db.commit()
+            return
+        
+        # Initialize RAGAS service
+        ragas_service = RAGASService()
+        
+        # Process samples in batches
+        overall_scores = {}
+        total_cost = {"tokens": 0, "cost": 0.0, "currency": "USD"}
+        traces = []
+        
+        for i in range(0, total_samples, batch_size):
+            batch = samples[i:i + batch_size]
+            
+            try:
+                # Run evaluation on batch
+                batch_results = await ragas_service.evaluate_batch(
+                    samples=batch,
+                    metrics=metrics,
+                    llm_config=llm_config,
+                    embeddings_config=embeddings_config
+                )
+                
+                # Store results
+                for j, result in enumerate(batch_results):
+                    sample = batch[j]
+                    
+                    # Create evaluation result
+                    eval_result = EvaluationResult(
+                        evaluation_id=evaluation_id,
+                        sample_id=sample.sample_id,
+                        scores=result["scores"],
+                        reasoning=result.get("reasoning"),
+                        cost=result.get("cost")
+                    )
+                    db.add(eval_result)
+                    
+                    # Update cost tracking
+                    if result.get("cost"):
+                        total_cost["tokens"] += result["cost"].get("tokens", 0)
+                        total_cost["cost"] += result["cost"].get("cost", 0)
+                
+                # Update progress
+                progress = min((i + len(batch)) / total_samples, 1.0)
+                evaluation.progress = progress
+                db.commit()
+                
+                logger.info(f"Evaluation {evaluation_id}: {progress:.1%} complete")
+                
+            except Exception as e:
+                logger.error(f"Error processing batch in evaluation {evaluation_id}: {e}")
+                if raise_exceptions:
+                    evaluation.status = "failed"
+                    evaluation.error_message = str(e)
+                    evaluation.completed_at = datetime.utcnow()
+                    db.commit()
+                    return
+                continue
+        
+        # Calculate overall scores
+        if evaluation.results:
+            for metric in metrics:
+                metric_name = metric["name"]
+                scores = [r.scores.get(metric_name, 0) for r in evaluation.results if r.scores]
+                if scores:
+                    overall_scores[metric_name] = sum(scores) / len(scores)
+        
+        # Update final status
+        evaluation.status = "completed"
+        evaluation.completed_at = datetime.utcnow()
+        evaluation.overall_scores = overall_scores
+        evaluation.cost_analysis = total_cost
+        evaluation.traces = traces
+        db.commit()
+        
+        logger.info(f"Evaluation {evaluation_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error in evaluation {evaluation_id}: {e}")
+        evaluation.status = "failed"
+        evaluation.error_message = str(e)
+        evaluation.completed_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+
+def main():
+    """Unit test function for evaluation routes"""
+    import asyncio
+    from fastapi.testclient import TestClient
+    from main import app
+    
+    client = TestClient(app)
+    
+    # Test data
+    test_evaluation = {
+        "dataset_id": "test-dataset-id",
+        "metrics": [
+            {"name": "answer_relevancy", "parameters": {}}
+        ],
+        "llm_config": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key": "test-key"
+        },
+        "experiment_name": "Test Evaluation"
+    }
+    
+    # Test single sample evaluation
+    test_single_eval = {
+        "sample": {
+            "user_input": "What is the capital of France?",
+            "retrieved_contexts": ["Paris is the capital of France."],
+            "response": "The capital of France is Paris."
+        },
+        "metrics": [
+            {"name": "answer_relevancy", "parameters": {}}
+        ]
+    }
+    
+    # Test single evaluation
+    response = client.post("/api/v1/evaluate/single", json=test_single_eval, headers={"Authorization": "Bearer test-api-key"})
+    assert response.status_code == 200
+    
+    print("Evaluation routes test passed!")
+
+
+if __name__ == "__main__":
+    main()
