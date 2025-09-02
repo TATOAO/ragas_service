@@ -52,12 +52,11 @@ class Evaluation(EvaluationBase, table=True):
     status: str = Field(default="pending", description="Evaluation status: pending, running, completed, failed")
     progress: float = Field(default=0.0, description="Evaluation progress (0.0 to 1.0)")
     error_message: Optional[str] = Field(None, description="Error message if failed")
-
     
     # Results
-    overall_scores: Optional[str] = Field(None, description="Overall metric scores")
-    cost_analysis: Optional[str] = Field(None, description="Cost information")
-    traces: Optional[str] = Field(None, description="Trace URLs")
+    overall_scores: Optional[Dict[str, Any]] = Field(None, description="Overall metric scores", sa_type=JSON)
+    cost_analysis: Optional[Dict[str, Any]] = Field(None, description="Cost information", sa_type=JSON)
+    traces: Optional[Dict[str, Any]] = Field(None, description="Trace URLs", sa_type=JSON)
     
     # Timestamps
     started_at: Optional[datetime] = Field(None, description="When evaluation started")
@@ -76,9 +75,9 @@ class EvaluationResponse(EvaluationBase):
     status: str
     progress: float
     error_message: Optional[str]
-    overall_scores: Optional[Dict[str, Any]]
-    cost_analysis: Optional[Dict[str, Any]]
-    traces: Optional[Dict[str, Any]]
+    overall_scores: Optional[str] = Field(None, description="Overall metric scores")
+    cost_analysis: Optional[str] = Field(None, description="Cost information")
+    traces: Optional[str] = Field(None, description="Trace URLs")
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     created_at: datetime
@@ -102,9 +101,9 @@ class EvaluationDeleteResponse(SQLModel):
 
 # Evaluation Result Models
 class EvaluationResultBase(SQLModel):
-    scores: str = Field(..., description="Metric scores for this sample")
+    scores: Dict[str, Any] = Field(..., description="Metric scores for this sample", sa_type=JSON)
     reasoning: Optional[str] = Field(None, description="Reasoning for scores")
-    cost: Optional[str] = Field(None, description="Cost for this sample")
+    cost: Optional[Dict[str, Any]] = Field(None, description="Cost for this sample", sa_type=JSON)
 
 
 class EvaluationResultCreate(EvaluationResultBase):

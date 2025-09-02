@@ -3,10 +3,11 @@ from typing import Any, Dict, List, Optional
 import traceback
 import cohere
 import pandas as pd
+import math
 from loguru import logger
 
 from app.core.config import settings
-from app.models.sample import SampleBase
+from app.models.sample import SampleBase, Sample
 
 # Import RAGAS components
 from ragas import EvaluationDataset, evaluate
@@ -102,7 +103,12 @@ class RAGASService:
         self.embeddings = LangchainEmbeddingsWrapper(self.embeddings)
     
     def _convert_sample_to_ragas_format(self, sample: dict[str, Any]) -> SampleBase:
-        return SampleBase(**sample)
+        if type(sample) is dict:
+            return SampleBase(**sample)
+        elif type(sample) is SampleBase or type(sample) is Sample:
+            return sample
+        else:
+            raise ValueError("Invalid sample type")
     
     async def evaluate_single_sample(
         self,
@@ -126,7 +132,6 @@ class RAGASService:
             
             # Select metrics
             selected_metrics = []
-            import ipdb; ipdb.set_trace()
             for metric_config in metrics:
                 metric_name = metric_config.get("name")
                 if metric_name in self.metrics_map:
@@ -178,8 +183,6 @@ class RAGASService:
         self,
         samples: List[Any],
         metrics: List[Dict[str, Any]],
-        llm_config: Optional[Dict[str, Any]] = None,
-        embeddings_config: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """Evaluate a batch of samples"""
         try:
@@ -229,12 +232,19 @@ class RAGASService:
                     sample_scores = results.scores[i]
                     for metric_name in sample_scores.keys():
                         if metric_name in self.metrics_map:
-                            scores[metric_name] = float(sample_scores[metric_name])
+                            if math.isnan(sample_scores[metric_name]):
+                                scores[metric_name] = None
+                            else:
+                                scores[metric_name] = float(sample_scores[metric_name])
+
                 else:
                     # Fallback to overall scores if individual scores not available
                     for metric_name in results._repr_dict.keys():
                         if metric_name in self.metrics_map:
-                            scores[metric_name] = float(results._repr_dict[metric_name])
+                            if math.isnan(results._repr_dict[metric_name]):
+                                scores[metric_name] = None
+                            else:
+                                scores[metric_name] = float(results._repr_dict[metric_name])
                 
                 batch_results.append({
                     "scores": scores,

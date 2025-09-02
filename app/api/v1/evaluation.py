@@ -55,13 +55,16 @@ async def evaluate_dataset(
     start_time = datetime.utcnow()
     
     # Start background evaluation
+    # background_tasks.add_task(
+    #     run_evaluation,
+    # Add evaluation to background tasks
     background_tasks.add_task(
         run_evaluation,
         evaluation.evaluation_id,
         evaluation_data.dataset_id,
-        evaluation_data.metrics,
-        evaluation_data.llm_config,
-        evaluation_data.embeddings_config,
+        [m.model_dump() for m in evaluation_data.metrics],
+        evaluation_data.llm_config.model_dump() if evaluation_data.llm_config else None,
+        evaluation_data.embeddings_config.model_dump() if evaluation_data.embeddings_config else None,
         evaluation_data.batch_size
     )
     
@@ -342,11 +345,11 @@ async def run_evaluation(
             
             try:
                 # Run evaluation on batch
+                ragas_service._setup_llm(llm_config)
+                ragas_service._setup_embeddings(embeddings_config)
                 batch_results = await ragas_service.evaluate_batch(
                     samples=batch,
                     metrics=metrics,
-                    llm_config=llm_config,
-                    embeddings_config=embeddings_config
                 )
                 
                 # Store results
@@ -361,12 +364,17 @@ async def run_evaluation(
                         reasoning=result.get("reasoning"),
                         cost=result.get("cost")
                     )
+
                     db.add(eval_result)
                     
                     # Update cost tracking
                     if result.get("cost"):
-                        total_cost["tokens"] += result["cost"].get("tokens", 0)
-                        total_cost["cost"] += result["cost"].get("cost", 0)
+                        tokens = result["cost"].get("tokens")
+                        cost_value = result["cost"].get("cost")
+                        if tokens is not None:
+                            total_cost["tokens"] += tokens
+                        if cost_value is not None:
+                            total_cost["cost"] += cost_value
                 
                 # Update progress
                 progress = min((i + len(batch)) / total_samples, 1.0)
@@ -383,9 +391,11 @@ async def run_evaluation(
         if evaluation.results:
             for metric in metrics:
                 metric_name = metric["name"]
-                scores = [r.scores.get(metric_name, 0) for r in evaluation.results if r.scores]
-                if scores:
-                    overall_scores[metric_name] = sum(scores) / len(scores)
+                scores = [r.scores.get(metric_name) for r in evaluation.results if r.scores]
+                # Filter out None values and calculate average
+                valid_scores = [s for s in scores if s is not None]
+                if valid_scores:
+                    overall_scores[metric_name] = sum(valid_scores) / len(valid_scores)
         
         # Update final status
         evaluation.status = "completed"
@@ -445,7 +455,7 @@ def main():
 
     # Test evaluation on dataset
     test_evaluation = {
-        "dataset_id": "8bdfdfe6-22d6-462d-a569-48157b33c697",
+        "dataset_id": "3e9554eb-402d-4cff-bf75-14f1b7a19bca",
         "metrics": [
             {"name": "answer_relevancy", "parameters": {}}
         ],
