@@ -47,7 +47,7 @@ class SampleBase(SQLModel):
 
 
 class SampleCreate(SampleBase):
-    dataset_id: str = Field(..., description="Dataset ID")
+    dataset_id: Optional[str] = Field(None, description="Dataset ID")
 
 
 class SampleUpdate(SQLModel):
