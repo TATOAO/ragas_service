@@ -1,5 +1,6 @@
 from sqlmodel import SQLModel, Field, Relationship
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from pydantic import SecretStr
 from datetime import datetime
 from sqlalchemy import JSON, func
 import uuid
@@ -24,6 +25,7 @@ class LLMConfig(SQLModel):
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:
         return getattr(self, key, default)
+
 class EvaluationBase(SQLModel):
     experiment_name: Optional[str] = Field(None, description="Experiment name")
     metrics: List[MetricConfig] = Field(..., description="Metrics to evaluate", sa_type=JSON)
@@ -33,7 +35,8 @@ class EvaluationBase(SQLModel):
 
 
 class EvaluationCreate(EvaluationBase):
-    dataset_id: str = Field(..., description="Dataset ID")
+    dataset_id: Optional[str] = Field(default=None, description="Dataset ID")
+    dataset_name: Optional[str] = Field(default=None, description="Dataset name")
 
 class EvaluationUpdate(SQLModel):
     experiment_name: Optional[str] = Field(None, description="Experiment name")

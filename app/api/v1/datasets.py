@@ -216,6 +216,20 @@ async def insert_sample_by_name(
     logger.info(f"Inserted sample: {sample.sample_id} into dataset: {dataset_name} (ID: {dataset.dataset_id})")
     return sample
 
+@router.get("/datasetname/{dataset_name}/samples", response_model=List[SampleResponse])
+async def get_samples_by_dataset_name(
+    dataset_name: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Get samples by dataset name"""
+    dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset with name '{dataset_name}' not found")
+    
+    samples = db.query(Sample).filter(Sample.dataset_id == dataset.dataset_id).all()
+    return samples
+
 
 @router.post("/{dataset_id}/samples/bulk", response_model=SampleBulkResponse)
 async def bulk_insert_samples(
@@ -342,8 +356,8 @@ def main():
     
     # Test data
     test_dataset = {
-        "name": "Test Dataset",
-        "description": "A test dataset",
+        "name": "Jinyao_recall_dataset",
+        "description": "A recall dataset for Jinyao",
         "sample_type": "single_turn",
         "metadata_json": {"source": "test"}
     }
@@ -393,6 +407,9 @@ def main():
     assert response.status_code == 200
     """
 
+
+    # test insert sample by name
+    """
     test_sample = {
         "user_input": "What is the capital of Japan?",
         "retrieved_contexts": ["Tokyo is the capital of Japan."],
@@ -402,8 +419,17 @@ def main():
 
     # Test insert sample by name
     response = client.post(f"/api/v1/datasets/datasetname/{test_dataset['name']}/samples", json=test_sample, headers={"Authorization": "Bearer test-api-key"})
-    print("xxxxxxxxxxxxxxxxxxxxxxxxx insert sample by name xxxxxxxxxxxxxxxxxxxxxx")
+    # print("xxxxxxxxxxxxxxxxxxxxxxxxx insert sample by name xxxxxxxxxxxxxxxxxxxxxx")
     print(response.json())
+    assert response.status_code == 200
+    """
+
+
+    # test get samples by dataset name
+    response = client.get(f"/api/v1/datasets/datasetname/{test_dataset['name']}/samples", headers={"Authorization": "Bearer test-api-key"})
+    print("xxxxxxxxxxxxxxxxxxxxxxxxx get samples by dataset name xxxxxxxxxxxxxxxxxxxxxx")
+    import json
+    print(json.dumps(response.json(), ensure_ascii=False, indent=2))
     assert response.status_code == 200
 
 # python -m app.api.v1.datasets

@@ -25,6 +25,9 @@ from ragas.metrics import (
 )
 from ragas.metrics._aspect_critic import coherence
 
+# Import custom metrics
+from app.services.custom_matric import custom_context_recall
+
 # LangChain imports for different providers
 try:
     from langchain_anthropic import ChatAnthropic
@@ -54,7 +57,8 @@ class RAGASService:
             "context_recall": context_recall,
             "answer_correctness": answer_correctness,
             "answer_similarity": answer_similarity,
-            "critique_tone": coherence
+            "critique_tone": coherence,
+            "custom_context_recall": custom_context_recall
         }
         self.llm = None
         self.embeddings = None
@@ -286,13 +290,14 @@ class RAGASService:
             "answer_correctness": "Measures the correctness of the answer",
             "answer_similarity": "Measures the similarity between generated and reference answers",
             "context_relevancy": "Measures the relevancy of retrieved contexts",
-            "critique_tone": "Evaluates the tone and style of the answer"
+            "critique_tone": "Evaluates the tone and style of the answer",
+            "custom_context_recall": "LLM-powered custom metric that measures context recall using only user_input and retrieved_contexts"
         }
         return descriptions.get(metric_name, "No description available")
     
     def _get_metric_type(self, metric_name: str) -> str:
         """Get metric type"""
-        llm_based = ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone"]
+        llm_based = ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone", "custom_context_recall"]
         embedding_based = ["context_precision", "context_recall", "answer_similarity", "context_relevancy"]
         
         if metric_name in llm_based:
@@ -305,14 +310,14 @@ class RAGASService:
     def _get_metric_parameters(self, metric_name: str) -> Dict[str, Any]:
         """Get metric parameters"""
         return {
-            "llm_required": metric_name in ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone"],
+            "llm_required": metric_name in ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone", "custom_context_recall"],
             "embeddings_required": metric_name in ["context_precision", "context_recall", "answer_similarity", "context_relevancy"]
         }
     
     def _get_metric_default_config(self, metric_name: str) -> Dict[str, Any]:
         """Get metric default configuration"""
         return {
-            "llm": "gpt-4o" if metric_name in ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone"] else None,
+            "llm": "gpt-4o" if metric_name in ["answer_relevancy", "faithfulness", "answer_correctness", "critique_tone", "custom_context_recall"] else None,
             "embeddings": "text-embedding-3-small" if metric_name in ["context_precision", "context_recall", "answer_similarity", "context_relevancy"] else None
         }
     
@@ -342,6 +347,8 @@ if __name__ == "__main__":
     all_metrics = service.get_available_metrics()
     print(all_metrics)
 
+    custom_metrics = [{"name": "custom_context_recall", "parameters": {}}]
+
     sample = {
         "user_input": "What is the capital of France?",
         "response": "The capital of France is Paris.",
@@ -358,14 +365,14 @@ if __name__ == "__main__":
         service._setup_embeddings(None)
 
         # test simple evaluation
-        result = await service.evaluate_single_sample(sample, metrics=all_metrics)
+        result = await service.evaluate_single_sample(sample, metrics=custom_metrics)
 
         # test batch evaluation
         # result = await service.evaluate_batch(samples=[sample, sample], metrics=all_metrics)
 
 
 
-        print(result)
+        print('result', result)
 
     import asyncio
     asyncio.run(main())

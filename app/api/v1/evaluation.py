@@ -34,6 +34,15 @@ async def evaluate_dataset(
 ):
     """Start a dataset evaluation"""
     # Verify dataset exists
+
+    # if dataset id is none, use the dataset name
+    if evaluation_data.dataset_id is None:
+        dataset = db.query(Dataset).filter(Dataset.name == evaluation_data.dataset_name).first()
+        if not dataset:
+            raise DatasetNotFoundError(evaluation_data.dataset_name)
+        evaluation_data.dataset_id = dataset.dataset_id
+
+
     dataset = db.query(Dataset).filter(Dataset.dataset_id == evaluation_data.dataset_id).first()
     if not dataset:
         raise DatasetNotFoundError(evaluation_data.dataset_id)
@@ -74,25 +83,11 @@ async def evaluate_dataset(
     samples_count = db.query(Sample).filter(Sample.dataset_id == evaluation_data.dataset_id).count()
     estimated_time = datetime.utcnow() + timedelta(minutes=samples_count * 2)  # Rough estimate
     
-    """
-    class EvaluationResponse(EvaluationBase):
-        evaluation_id: str
-        dataset_id: str
-        status: str
-        progress: float
-        error_message: Optional[str]
-        overall_scores: Optional[Dict[str, Any]]
-        cost_analysis: Optional[Dict[str, Any]]
-        traces: Optional[Dict[str, Any]]
-        started_at: Optional[datetime]
-        completed_at: Optional[datetime]
-        created_at: datetime
-        updated_at: datetime
-        
-        class Config:
-            from_attributes = True
 
-    """
+    if evaluation.llm_config and evaluation.llm_config.get('api_key'):
+        evaluation.llm_config['api_key'] = "********"
+    if evaluation.embeddings_config and evaluation.embeddings_config.get('api_key'):
+        evaluation.embeddings_config['api_key'] = "********"
 
     return {
         "experiment_name": evaluation.experiment_name,
@@ -455,9 +450,10 @@ def main():
 
     # Test evaluation on dataset
     test_evaluation = {
-        "dataset_id": "3e9554eb-402d-4cff-bf75-14f1b7a19bca",
+        # "dataset_id": "3e9554eb-402d-4cff-bf75-14f1b7a19bca",
+        "dataset_name": "Jinyao_recall_dataset",
         "metrics": [
-            {"name": "answer_relevancy", "parameters": {}}
+            {"name": "context_recall", "parameters": {}}
         ],
         "llm_config": {
             "provider": "openai",
@@ -469,7 +465,7 @@ def main():
     }
     
     response = client.post("/api/v1/evaluate/dataset", json=test_evaluation, headers={"Authorization": "Bearer test-api-key"})
-    print(response.json())
+    print('result', response.json())
     assert response.status_code == 200
     
     print("Evaluation routes test passed!")
@@ -477,10 +473,6 @@ def main():
 
 
 
-
-
-
-
-
+# python -m app.api.v1.evaluation
 if __name__ == "__main__":
     main()

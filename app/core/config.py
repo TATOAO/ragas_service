@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "RAGAS Evaluation Service"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8887
     
     # Security
     SECRET_KEY: str = "your-secret-key-here"
