@@ -364,12 +364,10 @@ def main():
     
     
     # Test create dataset
-    """
     response = client.post("/api/v1/datasets/", json=test_dataset, headers={"Authorization": "Bearer test-api-key"})
     print(response.json())
     assert response.status_code == 200
     dataset_id = response.json()["dataset_id"]
-    """
 
     # Test get dataset
     """

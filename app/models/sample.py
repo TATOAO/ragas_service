@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
 from sqlalchemy import func, TypeDecorator
+from app.core.timezone import get_current_time_utc_plus_8
+from .base import TimezoneAwareModel
 import json
 
 if TYPE_CHECKING:
@@ -65,22 +67,19 @@ class Sample(SampleBase, table=True):  # pyright: ignore[reportCallIssue, report
     
     sample_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     dataset_id: str = Field(foreign_key="datasets.dataset_id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now()})
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
+    created_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now()})
+    updated_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
     
     # Relationships
     dataset: "Dataset" = Relationship(back_populates="samples")
     evaluation_results: List["EvaluationResult"] = Relationship(back_populates="sample", cascade_delete=True)
 
 
-class SampleResponse(SampleBase):
+class SampleResponse(SampleBase, TimezoneAwareModel):
     sample_id: str
     dataset_id: str
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 class SampleListResponse(SQLModel):

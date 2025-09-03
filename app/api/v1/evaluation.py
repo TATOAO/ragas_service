@@ -204,15 +204,23 @@ async def evaluate_single_sample(
 async def list_evaluations(
     pagination: PaginationParams = Depends(),
     dataset_id: Optional[str] = Query(None),
+    dataset_name: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user_api_key)
 ):
     """List evaluations with pagination and filtering"""
+
     query = db.query(Evaluation)
+
+    if dataset_id is None and dataset_name is not None:
+        dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
+        if not dataset:
+            raise DatasetNotFoundError(dataset_name)
+        dataset_id = dataset.dataset_id
     
     # Apply filters
-    if dataset_id:
+    if dataset_id is not None:
         query = query.filter(Evaluation.dataset_id == dataset_id)
     if status:
         query = query.filter(Evaluation.status == status)
@@ -228,6 +236,13 @@ async def list_evaluations(
         # Get dataset name
         dataset = db.query(Dataset).filter(Dataset.dataset_id == eval.dataset_id).first()
         dataset_name = dataset.name if dataset else "Unknown"
+
+        llm_config = eval.llm_config if hasattr(eval, 'llm_config') else None
+        embeddings_config = eval.embeddings_config if hasattr(eval, 'embeddings_config') else None
+        if llm_config and llm_config.get('api_key'):
+            llm_config['api_key'] = "********"
+        if embeddings_config and embeddings_config.get('api_key'):
+            embeddings_config['api_key'] = "********"
         
         evaluation_list.append({
             "evaluation_id": eval.evaluation_id,
@@ -235,9 +250,19 @@ async def list_evaluations(
             "dataset_name": dataset_name,
             "experiment_name": eval.experiment_name,
             "status": eval.status,
-            "metrics_count": len(eval.metrics) if eval.metrics else 0,
-            "created_at": eval.created_at.isoformat() if eval.created_at else None,
-            "completed_at": eval.completed_at.isoformat() if eval.completed_at else None
+            "metrics": eval.metrics if eval.metrics else [],
+            "progress": eval.progress if hasattr(eval, 'progress') else 0.0,
+            "error_message": eval.error_message if hasattr(eval, 'error_message') else None,
+            "overall_scores": eval.overall_scores if hasattr(eval, 'overall_scores') else None,
+            "cost_analysis": eval.cost_analysis if hasattr(eval, 'cost_analysis') else None,
+            "traces": eval.traces if hasattr(eval, 'traces') else None,
+            "started_at": eval.started_at if hasattr(eval, 'started_at') else None,
+            "completed_at": eval.completed_at if hasattr(eval, 'completed_at') else None,
+            "created_at": eval.created_at if eval.created_at else datetime.utcnow(),
+            "updated_at": eval.updated_at if hasattr(eval, 'updated_at') else datetime.utcnow(),
+            "llm_config": eval.llm_config if hasattr(eval, 'llm_config') else None,
+            "embeddings_config": eval.embeddings_config if hasattr(eval, 'embeddings_config') else None,
+            "batch_size": eval.batch_size if hasattr(eval, 'batch_size') else 10
         })
     
     return {
@@ -449,11 +474,12 @@ def main():
 
 
     # Test evaluation on dataset
+    """
     test_evaluation = {
         # "dataset_id": "3e9554eb-402d-4cff-bf75-14f1b7a19bca",
         "dataset_name": "Jinyao_recall_dataset",
         "metrics": [
-            {"name": "context_recall", "parameters": {}}
+            {"name": "custom_context_recall", "parameters": {}}
         ],
         "llm_config": {
             "provider": "openai",
@@ -469,7 +495,13 @@ def main():
     assert response.status_code == 200
     
     print("Evaluation routes test passed!")
+    """
 
+
+    # Test get evaluation results with dataset name
+    response = client.get(f"/api/v1/evaluate/evaluations?dataset_name=Jinyao_recall_dataset", headers={"Authorization": "Bearer test-api-key"})
+    print('result', response.json())
+    assert response.status_code == 200
 
 
 

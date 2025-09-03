@@ -1,4 +1,6 @@
 from typing import Any, Dict, List, Optional
+import asyncio
+import os
 
 import traceback
 import cohere
@@ -50,6 +52,25 @@ class RAGASService:
     """Service for running RAGAS evaluations"""
     
     def __init__(self):
+        # Ensure we're using the standard asyncio event loop policy to avoid uvloop issues
+        try:
+            # Force use of standard asyncio event loop policy
+            if hasattr(asyncio, 'WindowsProactorEventLoopPolicy') and os.name == 'nt':
+                asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+            else:
+                asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+            
+            # If uvloop is being used, try to switch to standard asyncio
+            try:
+                import uvloop
+                # Disable uvloop for this process
+                os.environ["UVICORN_LOOP"] = "asyncio"
+                logger.info("Disabled uvloop to prevent compatibility issues with RAGAS")
+            except ImportError:
+                pass
+        except Exception as e:
+            logger.warning(f"Could not set event loop policy: {e}")
+        
         self.metrics_map = {
             "answer_relevancy": answer_relevancy,
             "context_precision": context_precision,

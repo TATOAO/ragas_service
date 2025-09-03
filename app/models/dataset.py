@@ -3,6 +3,8 @@ from pydantic import model_validator
 from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from datetime import datetime
 from sqlalchemy import JSON, Column, func
+from app.core.timezone import get_current_time_utc_plus_8
+from .base import TimezoneAwareModel
 import uuid
 import json
 
@@ -32,8 +34,8 @@ class Dataset(DatasetBase, table=True):
     __tablename__ = "datasets"
     
     dataset_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now()})
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
+    created_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now()})
+    updated_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
     
     # Relationships
     samples: List["Sample"] = Relationship(back_populates="dataset", cascade_delete=True)
@@ -67,7 +69,7 @@ class Dataset(DatasetBase, table=True):
         return {}
 
 
-class DatasetResponse(DatasetBase):
+class DatasetResponse(DatasetBase, TimezoneAwareModel):
     dataset_id: str
     created_at: datetime
     updated_at: datetime
@@ -88,9 +90,6 @@ class DatasetResponse(DatasetBase):
         elif metadata is None:
             values.metadata_json = {}
         return values
-    
-    class Config:
-        from_attributes = True
 
 
 class DatasetListResponse(SQLModel):

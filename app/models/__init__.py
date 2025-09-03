@@ -1,3 +1,6 @@
+# Base models
+from .base import TimezoneAwareModel
+
 # Dataset models
 from .dataset import (
     Dataset, DatasetBase, DatasetCreate, DatasetUpdate, 
@@ -34,6 +37,8 @@ from .common import (
 )
 
 __all__ = [
+    # Base
+    "TimezoneAwareModel",
     # Dataset
     "Dataset", "DatasetBase", "DatasetCreate", "DatasetUpdate", 
     "DatasetResponse", "DatasetListResponse", "DatasetDeleteResponse",

@@ -27,13 +27,15 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: List[str] = ["*"]
     
     # Database
-
-
     POSTGRES_USER:str="postgresql"
     POSTGRES_PASSWORD:str="password"
     POSTGRES_HOSTNAME:str="localhost"
     POSTGRES_DATABASE:str="ragas"
     POSTGRES_PORT:int=5432
+
+    # Timezone settings
+    TIMEZONE_OFFSET_HOURS: int = 8  # UTC+8
+    USE_LOCAL_TIMEZONE: bool = True  # Whether to return times in local timezone
 
     @property
     def DATABASE_URL(self) -> str:

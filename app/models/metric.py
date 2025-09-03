@@ -2,6 +2,8 @@ from sqlmodel import SQLModel, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from sqlalchemy import JSON, func
+from app.core.timezone import get_current_time_utc_plus_8
+from .base import TimezoneAwareModel
 import uuid
 
 
@@ -35,11 +37,11 @@ class Metric(MetricBase, table=True):
     
     metric_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     is_active: bool = Field(default=True, description="Whether metric is active")
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now()})
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
+    created_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now()})
+    updated_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
 
 
-class MetricResponse(MetricBase):
+class MetricResponse(MetricBase, TimezoneAwareModel):
     metric_id: str
     is_active: bool
     created_at: datetime

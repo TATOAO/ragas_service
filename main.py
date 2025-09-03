@@ -8,12 +8,17 @@ import logging
 from typing import Dict, Any
 import uuid
 from datetime import datetime
+import os
 
 from app.core.config import settings
 from app.core.database import init_db, close_db
 from app.core.auth import get_current_user
 from app.api.v1.router import api_router
 from app.core.exceptions import RAGASException
+from app.core.timezone import get_current_time_utc_plus_8
+
+# Disable uvloop to prevent compatibility issues with RAGAS
+os.environ["UVICORN_LOOP"] = "asyncio"
 
 # Configure logging
 logging.basicConfig(
@@ -75,7 +80,7 @@ async def ragas_exception_handler(request, exc: RAGASException):
                 "message": exc.message,
                 "details": exc.details
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": get_current_time_utc_plus_8().isoformat(),
             "request_id": str(uuid.uuid4())
         }
     )
@@ -93,7 +98,7 @@ async def general_exception_handler(request, exc: Exception):
                 "message": "An internal server error occurred",
                 "details": {"exception": str(exc)} if settings.DEBUG else {}
             },
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": get_current_time_utc_plus_8().isoformat(),
             "request_id": str(uuid.uuid4())
         }
     )
@@ -133,5 +138,6 @@ if __name__ == "__main__":
         host=settings.HOST,
         port=settings.PORT,
         reload=settings.DEBUG,
-        log_level="info"
+        log_level="info",
+        loop="asyncio"  # Force use of standard asyncio instead of uvloop
     )

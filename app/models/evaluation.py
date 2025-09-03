@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any, List, TYPE_CHECKING
 from pydantic import SecretStr
 from datetime import datetime
 from sqlalchemy import JSON, func
+from app.core.timezone import get_current_time_utc_plus_8
+from .base import TimezoneAwareModel
 import uuid
 
 if TYPE_CHECKING:
@@ -64,30 +66,27 @@ class Evaluation(EvaluationBase, table=True):
     # Timestamps
     started_at: Optional[datetime] = Field(None, description="When evaluation started")
     completed_at: Optional[datetime] = Field(None, description="When evaluation completed")
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now()})
-    updated_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
+    created_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now()})
+    updated_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()})
     
     # Relationships
     dataset: "Dataset" = Relationship(back_populates="evaluations")
     results: List["EvaluationResult"] = Relationship(back_populates="evaluation", cascade_delete=True)
 
 
-class EvaluationResponse(EvaluationBase):
+class EvaluationResponse(EvaluationBase, TimezoneAwareModel):
     evaluation_id: str
     dataset_id: str
     status: str
     progress: float
     error_message: Optional[str]
-    overall_scores: Optional[str] = Field(None, description="Overall metric scores")
-    cost_analysis: Optional[str] = Field(None, description="Cost information")
-    traces: Optional[str] = Field(None, description="Trace URLs")
+    overall_scores: Optional[Dict[str, Any]] = Field(None, description="Overall metric scores")
+    cost_analysis: Optional[Dict[str, Any]] = Field(None, description="Cost information")
+    traces: Optional[List[Dict[str, Any]]] = Field(None, description="Trace URLs")
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 class EvaluationListResponse(SQLModel):
@@ -120,21 +119,18 @@ class EvaluationResult(EvaluationResultBase, table=True):
     result_id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     evaluation_id: str = Field(foreign_key="evaluations.evaluation_id", index=True)
     sample_id: str = Field(foreign_key="samples.sample_id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow, sa_column_kwargs={"server_default": func.now()})
+    created_at: datetime = Field(default_factory=get_current_time_utc_plus_8, sa_column_kwargs={"server_default": func.now()})
     
     # Relationships
     evaluation: Evaluation = Relationship(back_populates="results")
     sample: "Sample" = Relationship(back_populates="evaluation_results")
 
 
-class EvaluationResultResponse(EvaluationResultBase):
+class EvaluationResultResponse(EvaluationResultBase, TimezoneAwareModel):
     result_id: str
     evaluation_id: str
     sample_id: str
     created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 

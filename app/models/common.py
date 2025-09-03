@@ -1,6 +1,7 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional, Dict, Any
 from datetime import datetime
+from app.core.timezone import get_current_time_utc_plus_8
 
 
 class PaginationParams(SQLModel):
