@@ -55,3 +55,25 @@ async def close_db():
         logger.info("Database connections closed")
     except Exception as e:
         logger.error(f"Error closing database connections: {e}")
+
+
+# test database connection
+# python -m app.core.database
+if __name__ == "__main__":
+
+    print("environment variable")
+
+    print(f"DATABASE_URL: {settings.DATABASE_URL}")
+    print(f"POSTGRES_USER: {settings.POSTGRES_USER}")
+    print(f"POSTGRES_PASSWORD: {settings.POSTGRES_PASSWORD}")
+    print(f"POSTGRES_HOSTNAME: {settings.POSTGRES_HOSTNAME}")
+    print(f"POSTGRES_DATABASE: {settings.POSTGRES_DATABASE}")
+    print(f"POSTGRES_PORT: {settings.POSTGRES_PORT}")
+
+
+    from sqlalchemy import text
+    db = SessionLocal()
+    print(db.execute(text("SELECT 1")))
+    db.close()
+
+    print("Database connection test passed")

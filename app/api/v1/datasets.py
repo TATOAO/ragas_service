@@ -166,6 +166,25 @@ async def delete_dataset(
     logger.info(f"Deleted dataset: {dataset_id}")
     return {"message": "Dataset deleted successfully", "dataset_id": dataset_id}
 
+@router.delete("/datasetname/{dataset_name}/samples", response_model=SampleDeleteResponse)
+async def delete_samples(
+    dataset_name: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user_api_key)
+):
+    """Delete all samples in a dataset"""
+    dataset = db.query(Dataset).filter(Dataset.name == dataset_name).first()
+    if not dataset:
+        raise DatasetNotFoundError(dataset_name)
+    
+    samples = db.query(Sample).filter(Sample.dataset_id == dataset.dataset_id).all()
+    for sample in samples:
+        db.delete(sample)
+    db.commit()
+    
+    logger.info(f"Deleted samples in dataset: {dataset_name}")
+    return {"message": "Samples deleted successfully", "dataset_name": dataset_name}
+
 
 @router.post("/{dataset_id}/samples", response_model=SampleResponse)
 async def insert_sample(

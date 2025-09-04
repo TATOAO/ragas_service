@@ -4,10 +4,23 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
-if os.path.exists('./docker/.env'):
-    load_dotenv('./docker/.env')
-else:
-    load_dotenv()
+# Try to load .env file from multiple possible locations
+env_paths = [
+    './docker/.env',  # When running from host
+    '/app/docker/.env',  # When running in Docker container
+    '.env',  # Fallback to root .env
+    '/app/.env'  # When running in Docker container
+]
+
+env_loaded = False
+for env_path in env_paths:
+    if os.path.exists(env_path):
+        load_dotenv(env_path)
+        env_loaded = True
+        break
+
+if not env_loaded:
+    load_dotenv()  # Fallback to default behavior
 
 
 class Settings(BaseSettings):
@@ -75,7 +88,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     
     class Config:
-        env_file = "./docker/.env"
+        env_file = ["./docker/.env", "/app/docker/.env", ".env", "/app/.env"]
         case_sensitive = True
 
 

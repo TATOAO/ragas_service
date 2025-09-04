@@ -84,5 +84,5 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 
 # Run the application
 # uvicorn main:app --host 0.0.0.0 --port 8000 --loop asyncio
-# CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]
-CMD ["tail", "-f", "/dev/null"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "asyncio"]
+# CMD ["tail", "-f", "/dev/null"]
