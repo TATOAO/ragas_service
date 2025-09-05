@@ -11,7 +11,7 @@ from .dataset import (
 from .sample import (
     Sample, SampleBase, SampleCreate, SampleUpdate,
     SampleResponse, SampleListResponse, SampleDeleteResponse,
-    SampleBulkCreate, SampleBulkResponse, Message
+    SampleBulkCreate, SampleBulkDeleteResponse, SampleBulkResponse, Message
 )
 
 # Evaluation models
@@ -45,7 +45,7 @@ __all__ = [
     # Sample
     "Sample", "SampleBase", "SampleCreate", "SampleUpdate",
     "SampleResponse", "SampleListResponse", "SampleDeleteResponse",
-    "SampleBulkCreate", "SampleBulkResponse", "Message",
+    "SampleBulkCreate", "SampleBulkDeleteResponse", "SampleBulkResponse", "Message",
     # Evaluation
     "Evaluation", "EvaluationBase", "EvaluationCreate", "EvaluationUpdate",
     "EvaluationResponse", "EvaluationListResponse", "EvaluationDeleteResponse",

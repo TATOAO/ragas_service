@@ -329,27 +329,70 @@ async def run_evaluation(
 ):
     """Background task to run evaluation"""
     from app.core.database import SessionLocal
+    from sqlalchemy.exc import PendingRollbackError, DisconnectionError
     
-    db = SessionLocal()
+    def get_fresh_db_session():
+        """Get a fresh database session with proper error handling"""
+        return SessionLocal()
+    
+    def safe_db_operation(db, operation, *args, **kwargs):
+        """Safely execute database operations with rollback handling"""
+        try:
+            return operation(db, *args, **kwargs)
+        except (PendingRollbackError, DisconnectionError) as e:
+            logger.warning(f"Database connection issue, rolling back and retrying: {e}")
+            db.rollback()
+            return operation(db, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Database operation failed: {e}")
+            db.rollback()
+            raise
+    
+    def update_evaluation_status(db, evaluation_id, status, **updates):
+        """Update evaluation status with proper error handling"""
+        try:
+            evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+            if evaluation:
+                for key, value in updates.items():
+                    setattr(evaluation, key, value)
+                db.commit()
+                return evaluation
+        except (PendingRollbackError, DisconnectionError) as e:
+            logger.warning(f"Database connection issue during status update, rolling back: {e}")
+            db.rollback()
+            # Try to get a fresh session and retry
+            fresh_db = get_fresh_db_session()
+            try:
+                evaluation = fresh_db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+                if evaluation:
+                    for key, value in updates.items():
+                        setattr(evaluation, key, value)
+                    fresh_db.commit()
+                    return evaluation
+            finally:
+                fresh_db.close()
+        except Exception as e:
+            logger.error(f"Failed to update evaluation status: {e}")
+            db.rollback()
+            raise
+    
+    db = get_fresh_db_session()
     try:
         # Update status to running
-        evaluation = db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+        evaluation = safe_db_operation(db, lambda db: db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first())
         if not evaluation:
             logger.error(f"Evaluation {evaluation_id} not found")
             return
         
-        evaluation.status = "running"
-        evaluation.started_at = datetime.utcnow()
-        db.commit()
+        # Update status to running
+        update_evaluation_status(db, evaluation_id, "running", started_at=datetime.utcnow())
         
         # Get samples
-        samples = db.query(Sample).filter(Sample.dataset_id == dataset_id).all()
+        samples = safe_db_operation(db, lambda db: db.query(Sample).filter(Sample.dataset_id == dataset_id).all())
         total_samples = len(samples)
         
         if total_samples == 0:
-            evaluation.status = "completed"
-            evaluation.completed_at = datetime.utcnow()
-            db.commit()
+            update_evaluation_status(db, evaluation_id, "completed", completed_at=datetime.utcnow())
             return
         
         # Initialize RAGAS service
@@ -372,69 +415,95 @@ async def run_evaluation(
                     metrics=metrics,
                 )
                 
-                # Store results
-                for j, result in enumerate(batch_results):
-                    sample = batch[j]
-                    
-                    # Create evaluation result
-                    eval_result = EvaluationResult(
-                        evaluation_id=evaluation_id,
-                        sample_id=sample.sample_id,
-                        scores=result["scores"],
-                        reasoning=result.get("reasoning"),
-                        cost=result.get("cost")
-                    )
+                # Store results with fresh database session for each batch
+                batch_db = get_fresh_db_session()
+                try:
+                    for j, result in enumerate(batch_results):
+                        sample = batch[j]
+                        
+                        # Create evaluation result
+                        eval_result = EvaluationResult(
+                            evaluation_id=evaluation_id,
+                            sample_id=sample.sample_id,
+                            scores=result["scores"],
+                            reasoning=result.get("reasoning"),
+                            cost=result.get("cost")
+                        )
 
-                    db.add(eval_result)
+                        batch_db.add(eval_result)
+                        
+                        # Update cost tracking
+                        if result.get("cost"):
+                            tokens = result["cost"].get("tokens")
+                            cost_value = result["cost"].get("cost")
+                            if tokens is not None:
+                                total_cost["tokens"] += tokens
+                            if cost_value is not None:
+                                total_cost["cost"] += cost_value
                     
-                    # Update cost tracking
-                    if result.get("cost"):
-                        tokens = result["cost"].get("tokens")
-                        cost_value = result["cost"].get("cost")
-                        if tokens is not None:
-                            total_cost["tokens"] += tokens
-                        if cost_value is not None:
-                            total_cost["cost"] += cost_value
-                
-                # Update progress
-                progress = min((i + len(batch)) / total_samples, 1.0)
-                evaluation.progress = progress
-                db.commit()
-                
-                logger.info(f"Evaluation {evaluation_id}: {progress:.1%} complete")
+                    # Update progress
+                    progress = min((i + len(batch)) / total_samples, 1.0)
+                    update_evaluation_status(batch_db, evaluation_id, "running", progress=progress)
+                    
+                    logger.info(f"Evaluation {evaluation_id}: {progress:.1%} complete")
+                    
+                except Exception as e:
+                    logger.error(f"Error storing batch results: {e}")
+                    batch_db.rollback()
+                    raise
+                finally:
+                    batch_db.close()
                 
             except Exception as e:
                 logger.error(f"Error processing batch in evaluation {evaluation_id}: {e}")
                 continue
         
-        # Calculate overall scores
-        if evaluation.results:
-            for metric in metrics:
-                metric_name = metric["name"]
-                scores = [r.scores.get(metric_name) for r in evaluation.results if r.scores]
-                # Filter out None values and calculate average
-                valid_scores = [s for s in scores if s is not None]
-                if valid_scores:
-                    overall_scores[metric_name] = sum(valid_scores) / len(valid_scores)
-        
-        # Update final status
-        evaluation.status = "completed"
-        evaluation.completed_at = datetime.utcnow()
-        evaluation.overall_scores = overall_scores
-        evaluation.cost_analysis = total_cost
-        evaluation.traces = traces
-        db.commit()
-        
-        logger.info(f"Evaluation {evaluation_id} completed successfully")
+        # Calculate overall scores with fresh session
+        final_db = get_fresh_db_session()
+        try:
+            evaluation = final_db.query(Evaluation).filter(Evaluation.evaluation_id == evaluation_id).first()
+            if evaluation and evaluation.results:
+                for metric in metrics:
+                    metric_name = metric["name"]
+                    scores = [r.scores.get(metric_name) for r in evaluation.results if r.scores]
+                    # Filter out None values and calculate average
+                    valid_scores = [s for s in scores if s is not None]
+                    if valid_scores:
+                        overall_scores[metric_name] = sum(valid_scores) / len(valid_scores)
+            
+            # Update final status
+            update_evaluation_status(
+                final_db, 
+                evaluation_id, 
+                "completed", 
+                completed_at=datetime.utcnow(),
+                overall_scores=overall_scores,
+                cost_analysis=total_cost,
+                traces=traces
+            )
+            
+            logger.info(f"Evaluation {evaluation_id} completed successfully")
+            
+        finally:
+            final_db.close()
         
     except Exception as e:
         logger.error(f"Error in evaluation {evaluation_id}: {e}")
-        evaluation.status = "failed"
-        evaluation.error_message = str(e)
-        evaluation.completed_at = datetime.utcnow()
-        db.commit()
+        try:
+            update_evaluation_status(
+                db, 
+                evaluation_id, 
+                "failed", 
+                error_message=str(e),
+                completed_at=datetime.utcnow()
+            )
+        except Exception as update_error:
+            logger.error(f"Failed to update evaluation status to failed: {update_error}")
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception as e:
+            logger.warning(f"Error closing database session: {e}")
 
 
 # python -m app.api.v1.evaluation
@@ -499,7 +568,7 @@ def main():
 
 
     # Test get evaluation results with dataset name
-    response = client.get(f"/api/v1/evaluate/evaluations?dataset_name=Jinyao_recall_dataset", headers={"Authorization": "Bearer test-api-key"})
+    response = client.get("/api/v1/evaluate/evaluations?dataset_name=Jinyao_recall_dataset", headers={"Authorization": "Bearer test-api-key"})
     print('result', response.json())
     assert response.status_code == 200
 

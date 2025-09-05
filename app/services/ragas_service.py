@@ -168,6 +168,8 @@ class RAGASService:
             if not selected_metrics:
                 raise ValueError("No valid metrics selected")
             
+            import ipdb; ipdb.set_trace()
+            
             # Run evaluation
             results = evaluate(
                 ragas_dataset,
@@ -365,8 +367,6 @@ if __name__ == "__main__":
         "base_url": settings.OPENAI_BASE_URL
     }
 
-    all_metrics = service.get_available_metrics()
-    print(all_metrics)
 
     custom_metrics = [{"name": "custom_context_recall", "parameters": {}}]
 
@@ -374,7 +374,7 @@ if __name__ == "__main__":
         "user_input": "What is the capital of France?",
         "response": "The capital of France is Paris.",
         "retrieved_contexts": [
-            "Paris is the capital and largest city of France."
+            "Paris is the capital and largest city of France.",
             "Beijing is the capital of China."
             ],
         "reference": "Paris is the capital of France."

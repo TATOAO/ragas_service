@@ -94,6 +94,11 @@ class SampleDeleteResponse(SQLModel):
     sample_id: str
 
 
+class SampleBulkDeleteResponse(SQLModel):
+    message: str
+    dataset_name: str
+
+
 class SampleBulkCreate(SQLModel):
     samples: List[SampleCreate]
 

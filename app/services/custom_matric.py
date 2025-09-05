@@ -48,19 +48,22 @@ class ContextRecallClassificationPrompt(
     """Prompt for evaluating context recall using the same pattern as RAGAS"""
     name: str = "context_recall_classification"
     instruction: str = """
-    Given a question and retrieved contexts, analyze how well the contexts cover the information needed to answer the question.
+    Given a question and a single retrieved context, analyze if this context is relevant and useful for answering the question.
     
-    For each context, classify if it can be attributed to answering the question:
+    Classify the context:
     - Use 'Yes' (1) if the context is relevant and provides useful information for the question
-    - Use 'No' (0) if the context is irrelevant or doesn't help answer the question
+    - Use 'No' (0) if the context is completely irrelevant or doesn't help answer the question
     
     Consider:
-    1. RELEVANCE: Is the context directly related to the question topic?
-    2. COMPLETENESS: Does the context provide comprehensive information?
-    3. INFORMATION DENSITY: Is the context rich in useful details?
-    4. COVERAGE: Does the context address the specific aspects asked in the question?
+    1. RELEVANCE: Is the context related to the question topic? (Even indirectly related contexts can be useful)
+    2. COMPLETENESS: Does the context provide useful information? (Doesn't need to be comprehensive)
+    3. INFORMATION DENSITY: Does the context contain relevant details?
+    4. COVERAGE: Does the context address aspects related to the question?
     
-    Output JSON with reason for each classification.
+    Be more lenient in your evaluation - if the context provides any useful information related to the question topic, mark it as relevant (1).
+    Only mark as irrelevant (0) if the context is completely unrelated to the question.
+    
+    Output JSON with reason for the classification.
     """
     input_model = QCA
     output_model = ContextRecallClassifications
@@ -68,23 +71,28 @@ class ContextRecallClassificationPrompt(
         (
             QCA(
                 question="What is the capital of France?",
-                context="Paris is the capital and largest city of France. Paris is located in the north-central part of France. The Eiffel Tower is a famous landmark in Paris."
+                context="Paris is the capital and largest city of France."
             ),
             ContextRecallClassifications(
                 classifications=[
                     ContextRecallClassification(
                         statement="Paris is the capital and largest city of France.",
-                        reason="Directly answers the question about France's capital.",
+                        reason="This context directly answers the question about France's capital.",
                         attributed=1,
                     ),
+                ]
+            ),
+        ),
+        (
+            QCA(
+                question="What is the capital of France?",
+                context="Paris is located in the north-central part of France."
+            ),
+            ContextRecallClassifications(
+                classifications=[
                     ContextRecallClassification(
                         statement="Paris is located in the north-central part of France.",
-                        reason="Provides relevant geographical context about the capital.",
-                        attributed=1,
-                    ),
-                    ContextRecallClassification(
-                        statement="The Eiffel Tower is a famous landmark in Paris.",
-                        reason="Adds cultural context and confirms Paris as the location.",
+                        reason="This context provides relevant geographical information about Paris, which is the capital of France.",
                         attributed=1,
                     ),
                 ]
@@ -93,23 +101,13 @@ class ContextRecallClassificationPrompt(
         (
             QCA(
                 question="What is the weather like today?",
-                context="The capital of France is Paris. Python is a programming language. The sky is blue."
+                context="The capital of France is Paris."
             ),
             ContextRecallClassifications(
                 classifications=[
                     ContextRecallClassification(
                         statement="The capital of France is Paris.",
-                        reason="Completely irrelevant to weather information.",
-                        attributed=0,
-                    ),
-                    ContextRecallClassification(
-                        statement="Python is a programming language.",
-                        reason="Completely irrelevant to weather information.",
-                        attributed=0,
-                    ),
-                    ContextRecallClassification(
-                        statement="The sky is blue.",
-                        reason="Partially relevant to weather but insufficient information.",
+                        reason="This context is completely irrelevant to the question about weather.",
                         attributed=0,
                     ),
                 ]
@@ -140,12 +138,14 @@ class CustomContextRecallMetric(MetricWithLLM, SingleTurnMetric):
     )
     max_retries: int = 1
     
-    def _compute_score(self, responses: t.List[ContextRecallClassification]) -> float:
+    def _compute_score(self, responses: t.List[ContextRecallClassification], total_contexts: int) -> float:
         """Compute the final score from classifications"""
-        response = [1 if item.attributed else 0 for item in responses]
-        denom = len(response)
-        numerator = sum(response)
-        score = numerator / denom if denom > 0 else np.nan
+        if total_contexts == 0:
+            return np.nan
+            
+        # Count how many contexts were classified as relevant
+        relevant_count = sum(1 for item in responses if item.attributed)
+        score = relevant_count / total_contexts
 
         if np.isnan(score):
             logger.warning("The LLM did not return a valid classification.")
@@ -191,36 +191,45 @@ class CustomContextRecallMetric(MetricWithLLM, SingleTurnMetric):
             if retrieved_contexts is None:
                 retrieved_contexts = []
             
-            logger.debug(f"Calculating recall for user_input: '{user_input[:100]}...' and {len(retrieved_contexts)} contexts")
+            total_contexts = len(retrieved_contexts)
+            logger.debug(f"Calculating recall for user_input: '{user_input[:100]}...' and {total_contexts} contexts")
             
-            # Run classification using the RAGAS pattern
-            classifications_list: t.List[
-                ContextRecallClassifications
-            ] = await self.context_recall_prompt.generate_multiple(
-                data=QCA(
-                    question=user_input,
-                    context="\n".join(retrieved_contexts),
-                ),
-                llm=self.llm,
-                callbacks=callbacks,
-            )
-            
-            # Process classifications following RAGAS pattern
-            classification_dicts = []
-            for classification in classifications_list:
-                classification_dicts.append(
-                    [clasif.model_dump() for clasif in classification.classifications]
+            # Evaluate each context individually
+            all_classifications = []
+            for i, context in enumerate(retrieved_contexts):
+                logger.debug(f"Evaluating context {i+1}/{total_contexts}: '{context[:100]}...'")
+                
+                # Run classification for this single context
+                classifications_list: t.List[
+                    ContextRecallClassifications
+                ] = await self.context_recall_prompt.generate_multiple(
+                    data=QCA(
+                        question=user_input,
+                        context=context,
+                    ),
+                    llm=self.llm,
+                    callbacks=callbacks,
                 )
+                
+                # Process classifications following RAGAS pattern
+                classification_dicts = []
+                for classification in classifications_list:
+                    classification_dicts.append(
+                        [clasif.model_dump() for clasif in classification.classifications]
+                    )
 
-            # Ensemble the classifications
-            ensembled_clasif = ensembler.from_discrete(classification_dicts, "attributed")
+                # Ensemble the classifications for this context
+                ensembled_clasif = ensembler.from_discrete(classification_dicts, "attributed")
+                
+                # Add to all classifications
+                all_classifications.extend([
+                    ContextRecallClassification(**clasif) for clasif in ensembled_clasif
+                ])
             
-            # Compute the final score
-            score = self._compute_score(
-                [ContextRecallClassification(**clasif) for clasif in ensembled_clasif]
-            )
+            # Compute the final score using total contexts as denominator
+            score = self._compute_score(all_classifications, total_contexts)
             
-            logger.debug(f"Calculated recall score: {score}")
+            logger.debug(f"Calculated recall score: {score} ({sum(1 for c in all_classifications if c.attributed)}/{total_contexts} relevant)")
             return float(score) if not np.isnan(score) else 0.0
             
         except Exception as e:
@@ -232,3 +241,116 @@ class CustomContextRecallMetric(MetricWithLLM, SingleTurnMetric):
 
 # Create an instance of the custom metric
 custom_context_recall = CustomContextRecallMetric()
+
+
+# python -m app.services.custom_matric
+if __name__ == "__main__":
+    import asyncio
+    import os
+    from app.core.config import settings
+    
+    async def test_metric():
+        """Test the custom context recall metric"""
+        print("Testing Custom Context Recall Metric...")
+        
+        # Initialize the metric
+        metric = CustomContextRecallMetric()
+        
+        # Set up LLM (you'll need to configure this based on your setup)
+        try:
+            from langchain_openai import ChatOpenAI
+            from ragas.llms import LangchainLLMWrapper
+            
+            # Create LangChain LLM
+            langchain_llm = ChatOpenAI(
+                model=settings.OPENAI_MODEL,
+                temperature=0,
+                api_key=settings.OPENAI_API_KEY,
+                base_url=settings.OPENAI_BASE_URL
+            )
+            
+            # Wrap with RAGAS LLM wrapper
+            metric.llm = LangchainLLMWrapper(langchain_llm)
+            print("✓ LLM initialized successfully")
+        except Exception as e:
+            print(f"✗ Failed to initialize LLM: {e}")
+            print("Please set OPENAI_API_KEY environment variable")
+            return
+        
+        # Test cases
+        test_cases = [
+            {
+                "name": "Test 1: All relevant contexts",
+                "user_input": "What is the capital of France?",
+                "retrieved_contexts": [
+                    "Paris is the capital and largest city of France.",
+                    "Paris is located in the north-central part of France.",
+                    "The Eiffel Tower is a famous landmark in Paris."
+                ],
+                "expected_score": 1.0  # All contexts are relevant
+            },
+            {
+                "name": "Test 2: Mixed relevant and irrelevant contexts",
+                "user_input": "What is the capital of France?",
+                "retrieved_contexts": [
+                    "Paris is the capital and largest city of France.",
+                    "Beijing is the capital of China.",
+                    "Python is a programming language.",
+                    "Paris is located in the north-central part of France."
+                ],
+                "expected_score": 0.5  # 2 out of 4 contexts are relevant
+            },
+            {
+                "name": "Test 3: All irrelevant contexts",
+                "user_input": "What is the weather like today?",
+                "retrieved_contexts": [
+                    "The capital of France is Paris.",
+                    "Python is a programming language.",
+                    "The sky is blue but this is not weather information."
+                ],
+                "expected_score": 0.0  # No contexts are relevant
+            },
+            {
+                "name": "Test 4: Empty contexts",
+                "user_input": "What is the capital of France?",
+                "retrieved_contexts": [],
+                "expected_score": 0.0  # No contexts to evaluate
+            }
+        ]
+        
+        # Run tests
+        for i, test_case in enumerate(test_cases, 1):
+            print(f"\n--- {test_case['name']} ---")
+            print(f"Question: {test_case['user_input']}")
+            print(f"Contexts ({len(test_case['retrieved_contexts'])}):")
+            for j, ctx in enumerate(test_case['retrieved_contexts'], 1):
+                print(f"  {j}. {ctx}")
+            
+            try:
+                # Calculate score
+                score = await metric._ascore(test_case, callbacks=None)
+                expected = test_case['expected_score']
+                
+                print(f"Calculated Score: {score:.2f}")
+                print(f"Expected Score: {expected:.2f}")
+                
+                # Check if score is close to expected (allow some tolerance for LLM variability)
+                if abs(score - expected) < 0.2:
+                    print("✓ Test PASSED")
+                else:
+                    print("✗ Test FAILED - Score differs significantly from expected")
+                    
+            except Exception as e:
+                print(f"✗ Test FAILED with error: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        print("\n" + "="*50)
+        print("Test Summary:")
+        print("The metric evaluates how many retrieved contexts are relevant to the question.")
+        print("Score = Number of relevant contexts / Total number of contexts")
+        print("Score range: 0.0 (no relevant contexts) to 1.0 (all contexts relevant)")
+    
+    # Run the test
+    asyncio.run(test_metric())
+    

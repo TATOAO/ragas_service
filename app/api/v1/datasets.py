@@ -16,6 +16,7 @@ from app.models import (
     DatasetUpdate,
     PaginationParams,
     SampleBulkCreate,
+    SampleBulkDeleteResponse,
     SampleBulkResponse,
     SampleCreate,
     SampleDeleteResponse,
@@ -166,7 +167,7 @@ async def delete_dataset(
     logger.info(f"Deleted dataset: {dataset_id}")
     return {"message": "Dataset deleted successfully", "dataset_id": dataset_id}
 
-@router.delete("/datasetname/{dataset_name}/samples", response_model=SampleDeleteResponse)
+@router.delete("/datasetname/{dataset_name}/samples", response_model=SampleBulkDeleteResponse)
 async def delete_samples(
     dataset_name: str,
     db: Session = Depends(get_db),
@@ -443,10 +444,19 @@ def main():
 
 
     # test get samples by dataset name
+    """
     response = client.get(f"/api/v1/datasets/datasetname/{test_dataset['name']}/samples", headers={"Authorization": "Bearer test-api-key"})
     print("xxxxxxxxxxxxxxxxxxxxxxxxx get samples by dataset name xxxxxxxxxxxxxxxxxxxxxx")
     import json
     print(json.dumps(response.json(), ensure_ascii=False, indent=2))
+    assert response.status_code == 200
+    """
+
+
+    # test delete samples by dataset name
+    response = client.delete(f"/api/v1/datasets/datasetname/用友测试集100条-4B打分/samples", headers={"Authorization": "Bearer test-api-key"})
+    print("xxxxxxxxxxxxxxxxxxxxxxxxx delete samples by dataset name xxxxxxxxxxxxxxxxxxxxxx")
+    print(response.json())
     assert response.status_code == 200
 
 # python -m app.api.v1.datasets
