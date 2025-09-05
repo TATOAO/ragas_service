@@ -15,7 +15,7 @@ env_paths = [
 env_loaded = False
 for env_path in env_paths:
     if os.path.exists(env_path):
-        load_dotenv(env_path)
+        load_dotenv(env_path, override=True)
         env_loaded = True
         break
 

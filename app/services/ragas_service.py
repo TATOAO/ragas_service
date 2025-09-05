@@ -168,8 +168,6 @@ class RAGASService:
             if not selected_metrics:
                 raise ValueError("No valid metrics selected")
             
-            import ipdb; ipdb.set_trace()
-            
             # Run evaluation
             results = evaluate(
                 ragas_dataset,
@@ -374,8 +372,8 @@ if __name__ == "__main__":
         "user_input": "What is the capital of France?",
         "response": "The capital of France is Paris.",
         "retrieved_contexts": [
+            "Beijing is the capital of China.",
             "Paris is the capital and largest city of France.",
-            "Beijing is the capital of China."
             ],
         "reference": "Paris is the capital of France."
     }

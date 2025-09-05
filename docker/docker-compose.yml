@@ -48,6 +48,8 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: ragas-service
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-ragas_user}:${POSTGRES_PASSWORD:-ragas_password}@postgres:5432/${POSTGRES_DATABASE:-ragas}
       # - REDIS_URL=redis://redis:6379
